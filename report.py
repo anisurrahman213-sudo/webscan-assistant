@@ -1,0 +1,142 @@
+"""
+report.py -- Professional single-file HTML report.
+
+Turns findings + attack paths into a clean, shareable report: a severity
+summary, an optional narrative (written by the brain if you pass one), a
+findings table with remediation, and the attack-path view. Pure templating,
+no third-party dependency.
+"""
+from __future__ import annotations
+
+import html
+from datetime import datetime, timezone
+from pathlib import Path
+
+from finding import Finding, Severity
+from correlation import AttackPath
+
+_SEV_COLOR = {
+    Severity.CRITICAL: "#7b1fa2",
+    Severity.HIGH: "#c62828",
+    Severity.MEDIUM: "#ef6c00",
+    Severity.LOW: "#f9a825",
+    Severity.INFO: "#546e7a",
+}
+_SEV_ORDER = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM,
+              Severity.LOW, Severity.INFO]
+
+
+def _counts(findings: list[Finding]) -> dict[Severity, int]:
+    c = {s: 0 for s in Severity}
+    for f in findings:
+        c[f.severity] += 1
+    return c
+
+
+def generate_html(engagement: str, target: str, findings: list[Finding],
+                  paths: list[AttackPath], summary: str = "") -> str:
+    esc = html.escape
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    counts = _counts(findings)
+
+    chips = " ".join(
+        f'<span class="chip" style="border-color:{_SEV_COLOR[s]};'
+        f'color:{_SEV_COLOR[s]}">{s.value.upper()}: {counts[s]}</span>'
+        for s in _SEV_ORDER
+    )
+
+    rows = []
+    for f in sorted(findings, key=lambda x: x.severity.rank, reverse=True):
+        color = _SEV_COLOR[f.severity]
+        rows.append(
+            "<tr>"
+            f'<td><span class="badge" style="background:{color}">'
+            f"{f.severity.value.upper()}</span></td>"
+            f"<td>{esc(f.title)}</td>"
+            f"<td>{esc(f.target)}</td>"
+            f"<td>{esc(f.affected_param or '')}</td>"
+            f"<td>{esc(f.remediation or '')}</td>"
+            "</tr>"
+        )
+    findings_rows = "\n".join(rows) or '<tr><td colspan="5">No findings.</td></tr>'
+
+    path_items = []
+    for p in paths:
+        color = _SEV_COLOR[p.severity]
+        chain = " &rarr; ".join(esc(x.category) for x in p.links)
+        path_items.append(
+            f'<li><span class="badge" style="background:{color}">'
+            f"{p.severity.value.upper()}</span> <b>{esc(p.name)}</b> &mdash; "
+            f"<code>{chain}</code><br>"
+            f'<span class="muted">{esc(p.impact)}</span></li>'
+        )
+    paths_html = "\n".join(path_items) or "<li>No multi-step paths identified.</li>"
+
+    summary_html = (f"<p>{esc(summary)}</p>" if summary
+                    else '<p class="muted">(no narrative summary provided)</p>')
+
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security Assessment Report</title>
+<style>
+  body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+         margin: 0; color: #1a1a1a; background: #f5f6f8; }}
+  .wrap {{ max-width: 920px; margin: 0 auto; padding: 32px 20px 64px; }}
+  header {{ border-bottom: 3px solid #1a237e; padding-bottom: 16px; margin-bottom: 24px; }}
+  h1 {{ margin: 0 0 4px; font-size: 24px; color: #1a237e; }}
+  h2 {{ font-size: 18px; margin: 28px 0 12px; color: #1a237e; }}
+  .meta {{ color: #555; font-size: 14px; }}
+  .chip {{ display:inline-block; border:1px solid; border-radius: 14px;
+          padding: 2px 10px; margin: 4px 6px 0 0; font-size: 13px; font-weight: 600; }}
+  .badge {{ color:#fff; border-radius: 4px; padding: 1px 8px; font-size: 12px;
+           font-weight: 700; }}
+  table {{ width: 100%; border-collapse: collapse; background:#fff;
+          box-shadow: 0 1px 3px rgba(0,0,0,.08); font-size: 14px; }}
+  th, td {{ text-align: left; padding: 10px 12px; border-bottom: 1px solid #eee;
+           vertical-align: top; }}
+  th {{ background: #1a237e; color: #fff; font-weight: 600; }}
+  ul.paths {{ list-style: none; padding: 0; }}
+  ul.paths li {{ background:#fff; border-left: 4px solid #1a237e; padding: 10px 14px;
+                margin-bottom: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }}
+  code {{ background:#eef; padding: 1px 6px; border-radius: 4px; }}
+  .muted {{ color:#666; font-size: 13px; }}
+  footer {{ margin-top: 40px; color:#888; font-size: 12px; text-align:center; }}
+</style></head><body><div class="wrap">
+<header>
+  <h1>Security Assessment Report</h1>
+  <div class="meta"><b>Engagement:</b> {esc(engagement)} &nbsp;|&nbsp;
+    <b>Target:</b> {esc(target)} &nbsp;|&nbsp; <b>Generated:</b> {ts}</div>
+  <div style="margin-top:10px">{chips}</div>
+</header>
+
+<h2>Executive Summary</h2>
+{summary_html}
+
+<h2>Attack Paths</h2>
+<ul class="paths">
+{paths_html}
+</ul>
+
+<h2>Findings</h2>
+<table>
+  <thead><tr><th>Severity</th><th>Finding</th><th>Target</th>
+    <th>Param</th><th>Remediation</th></tr></thead>
+  <tbody>
+{findings_rows}
+  </tbody>
+</table>
+
+<footer>Generated by webscan-assistant &middot; for authorized testing only</footer>
+</div></body></html>"""
+
+
+def write_report(path: str | Path, engagement: str, target: str,
+                 findings: list[Finding], paths: list[AttackPath],
+                 summary: str = "") -> Path:
+    out = Path(path)
+    out.write_text(
+        generate_html(engagement, target, findings, paths, summary),
+        encoding="utf-8",
+    )
+    return out
