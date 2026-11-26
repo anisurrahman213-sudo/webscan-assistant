@@ -1,0 +1,27 @@
+# Rules of Engagement (RoE).
+# FAIL-CLOSED: anything not listed under `in_scope` is denied.
+# An `out_of_scope` entry always wins, even if it would match an in-scope rule.
+
+engagement:
+  name: "Demo Web Assessment"
+  client: "ACME Ltd (demo)"
+  authorized_by: "security@acme.example -- signed 2026-11-26"
+
+in_scope:
+  domains:
+    - testphp.vulnweb.com          # public, intentionally-vulnerable test site
+    - "*.staging.acme.example"     # wildcard: any sub-host of staging
+  ips:
+    - 192.0.2.0/24                 # CIDR range
+
+out_of_scope:
+  domains:
+    - payments.acme.example        # never touch, even if it resolves in-range
+
+rules:
+  max_risk: intrusive              # highest risk the gate will even offer
+  forbidden_actions:
+    - destructive
+  time_window:                     # local time; remove the block for 24/7
+    start: "00:00"
+    end: "23:59"

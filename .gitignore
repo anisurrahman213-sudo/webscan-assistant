@@ -1,0 +1,9 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Runtime artifacts -- never commit engagement audit logs
+*.log.jsonl
+audit.log.jsonl
